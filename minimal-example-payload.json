@@ -1,0 +1,20 @@
+{
+    "apiKey": "9de2b53e68772c1efb56ae3a5153851b",
+    "notifier": {
+        "name": "Bugsnag Windows C",
+        "version": "0.1.0",
+        "url": "https://github.com/spike0xff/bugsnag-win-c"
+    },
+    "events": [{
+        "payloadVersion": "2",
+        "exceptions": [{
+            "errorClass": "UnhandledStructuredException",
+            "message": "Invalid Address",
+            "stacktrace": [{
+                "file": "adapters/fanuc/fanuc_adapter.cpp",
+                "lineNumber": 83,
+                "method": "readIniFile"
+            }]
+        }]
+    }]
+}
