@@ -5,13 +5,17 @@
 
 int main()
 {
-    bugsnag_set_apiKey("9de2b53e68772c1efb56ae3a5153851b");
+    bugsnag_set_api_key("9de2b53e68772c1efb56ae3a5153851b");
+    bugsnag_set_user("Spike", "sjm", "spike.mclarty@machinemetrics.com");
+    bugsnag_set_app_version("0.2.0.0");
+    bugsnag_set_app_type("console");
+
     // fire a notification!
     bugsnag_notify(
         "ACCESS_DENIED",
         "illegal access to memory location",
-        "a really tremendously extra super maximally longer than you would ever (reasonably, under normal (not, like, weird) circumstances) expect any file path to be (under Windows (except those damn node_modules trees with npm)) filepath:" __FILE__, __LINE__,
-        "main()"
+        __FILE__, __LINE__,
+        __func__
     );
     return 0;
 }
