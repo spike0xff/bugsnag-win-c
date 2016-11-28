@@ -18,16 +18,24 @@
     <ClInclude Include="bugsnag-win-c.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="bugsnag-win-c.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="test-app.c">
+    <ClCompile Include="bugsnag.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="bugsnag.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

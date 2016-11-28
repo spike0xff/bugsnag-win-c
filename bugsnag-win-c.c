@@ -9,11 +9,14 @@
 #include "windows.h"
 #endif
 
-// ---- constants ---------------------------------------
+// ---- constants & macros ------------------------------
 
 #define NOTIFIER_NAME "bugsnag-win-c"
-#define NOTIFIER_VERSION "0.3.0.0"
+#define NOTIFIER_VERSION "0.4.0.0"
 #define NOTIFIER_URL "https://github.com/spike0xff/bugsnag-win-c"
+
+#define STRINGQ(x) #x
+#define STRINGIZE(s) STRINGQ(s)
 
 // ---- type declarations -------------------------------
 
@@ -21,9 +24,13 @@
 
 static void set_severity(BugsnagSeverity howbad);
 
+static void replace_all(char *str, char old, char rep);
+
+static int stage_in_notify_stages(void);
+
 // copy source to buffer, adding escapes to make it a legal JSON string body
 // AND if it won't fit, replace excess on the LEFT with '...'
-static void encode_and_left_punch(char *buffer, size_t bufsize, const char* source);
+static void escape_and_left_punch(char *buffer, size_t bufsize, const char* source);
 
 static void update_device(void);
 
@@ -31,14 +38,19 @@ static void update_app_member(void);
 
 static void update_user_member(void);
 
-static int launch_curl(const char* args);
+static void launch_curl(const char* args);
+
+static const char* get_file_version(const char* filename);
+
 
 // ---- static global variables -------------------------
 
 static char apiKey[64];
+char exePath[MAX_PATH];
 static const char* severity = "";
 static char encodedFilename[_MAX_PATH];
 static char appVersion[16];
+static char stages[256];
 static char releaseStage[24];
 static char appType[32];
 static char userName[64];
@@ -56,27 +68,56 @@ static char groupingHash[128];
 void bugsnag_init(const char* key)
 {
     strcpy_s(apiKey, sizeof apiKey, key);
+    GetModuleFileName(NULL, exePath, MAX_PATH); // get this app's path
     bugsnag_set_user_name(NULL);            // default the user name
+    bugsnag_set_release_stage(NULL);        // default the app releaseStage
+    bugsnag_set_notify_stages(NULL);
+    bugsnag_set_app_version(NULL);
     update_device();
 }
 
 void bugsnag_set_app_version(const char* version)
 {
+    if (!version || !*version) {
+        version = get_file_version(exePath);
+        if (!version) {
+            version = "";
+        }
+    }
     strcpy_s(appVersion, sizeof appVersion, version);
     update_app_member();
 }
 
 void bugsnag_set_app_type(const char* typ)
 {
+    typ = typ ? typ : "unknown";
     strcpy_s(appType, sizeof appType, typ);
     update_app_member();
 }
 
-extern void bugsnag_set_app_release_stage(const char* stage)
+void bugsnag_set_release_stage(const char* stage)
 {
+    if (!stage || !*stage) {
+        stage = getenv("BUGSNAG_STAGE");
+        if (!stage) {
+            stage = STRINGIZE(CONFIGURATION);
+        }
+    }
     strcpy_s(releaseStage, sizeof releaseStage, stage);
     _strlwr(releaseStage);
     update_app_member();
+}
+
+void bugsnag_set_notify_stages(const char* stage_list)
+{
+    if (stage_list) {
+        strcpy_s(stages, sizeof stages - 1, stage_list);
+        // double NUL at the end
+        // or equivalently, ends with an empty string:
+        strchr(stages, 0)[1] = (char)0;
+        // turn commas into NULs to make later searching easier
+        replace_all(stages, ',', '\0');
+    }
 }
 
 void bugsnag_set_user_name(const char* name)
@@ -84,8 +125,8 @@ void bugsnag_set_user_name(const char* name)
     if (!name || !*name) {
         // default to what OS tells us
         name = getenv("USERNAME");
+        if (!name) name = "";
     }
-    if (!name) name = "";
     sprintf_s(userName, sizeof userName, "\"name\": \"%s\"", name);
     update_user_member();
 }
@@ -148,6 +189,9 @@ int bugsnag_notify(BugsnagSeverity howbad, const char* errorClass, const char* m
         fprintf(stderr, "**bugsnag_notify called with no apiKey set\n");
         return 0;
     }
+    if (!stage_in_notify_stages()) {
+        return  1;
+    }
     // prep any data needed for the payload
     if (!errorClass || !*errorClass) {
         errorClass = "error";
@@ -155,7 +199,7 @@ int bugsnag_notify(BugsnagSeverity howbad, const char* errorClass, const char* m
     if (!message) message = "";
 
     // escape the filename as needed to be a JSON string:
-    encode_and_left_punch(encodedFilename, sizeof encodedFilename, file);
+    escape_and_left_punch(encodedFilename, sizeof encodedFilename, file);
     set_severity(howbad);
 
     // create the JSON payload file, writing literally:
@@ -231,7 +275,7 @@ static void update_app_member()
         "      \"type\": \"%s\"\n"
         "    }";
 
-    if (appVersion[0]) {
+    if (appVersion[0] || releaseStage[0] || appType[0]) {
         sprintf_s(app, sizeof app, app_template, appVersion, releaseStage, appType);
     }
     else {
@@ -262,7 +306,29 @@ void set_severity(BugsnagSeverity howbad)
     }
 }
 
-void encode_and_left_punch(char *buffer, size_t bufsize, const char* source)
+static void replace_all(char *str, char old, char rep) {
+    while ((str = strchr(str, old))) {
+        *str++ = rep;
+    }
+}
+
+static int stage_in_notify_stages(void)
+{
+    // if NO notify stages are defined, treat that as 'all'
+    if (!stages[0]) {
+        return TRUE;
+    }
+    const char* s = stages;
+    while (*s) {
+        if (0 == strcmp(s, releaseStage)) {
+            return TRUE;
+        }
+        s += strlen(s) + 1;
+    }
+    return FALSE;
+}
+
+void escape_and_left_punch(char *buffer, size_t bufsize, const char* source)
 {
     char* out = buffer;
     const char* full = buffer + bufsize - 2;
@@ -283,10 +349,15 @@ void encode_and_left_punch(char *buffer, size_t bufsize, const char* source)
 
 static const char* get_os_version(void)
 {
-    static char version[64] = "unknown";
+    const char* version = get_file_version("kernel32.dll");
+    return version ? version : "unknown";
+}
+
+static const char* get_file_version(const char* filename)
+{
 #ifdef _WIN32
     char verData[512];
-    if (GetFileVersionInfo("kernel32.dll", 0, sizeof verData, verData))
+    if (GetFileVersionInfo(filename, 0, sizeof verData, verData))
     {
         LPBYTE lpBuffer = NULL;
         UINT   size = 0;
@@ -295,17 +366,19 @@ static const char* get_os_version(void)
             VS_FIXEDFILEINFO *verInfo = (VS_FIXEDFILEINFO *)lpBuffer;
             if (size != 0 && verInfo->dwSignature == 0xfeef04bd)
             {
+                static char version[64] = "";
                 sprintf_s(version, sizeof version, "%d.%d.%d.%d",
                     (verInfo->dwFileVersionMS >> 16) & 0xffff,
                     (verInfo->dwFileVersionMS >> 0) & 0xffff,
                     (verInfo->dwFileVersionLS >> 16) & 0xffff,
                     (verInfo->dwFileVersionLS >> 0) & 0xffff
                 );
+                return version;
             }
         }
     }
 #endif
-    return version;
+    return NULL;
 }
 
 static const char* get_host_name(void)
@@ -325,19 +398,40 @@ static const char* get_host_name(void)
 void update_device(void)
 {
     const char* device_template =
-        ",\n \"device\": { \"osVersion\": \"%s\", \"hostname\": \"%s\" }";
-    sprintf_s(device, sizeof device, device_template, get_os_version(), get_host_name());
+        ",\n \"device\": { \"os\": \"%s\", \"osVersion\": \"%s\", \"hostname\": \"%s\" }";
+    sprintf_s(device, sizeof device, device_template, "Windows", get_os_version(), get_host_name());
 }
 
-int launch_curl(const char* args)
+void launch_curl(const char* args)
 {
-    char szPath[MAX_PATH];
-    GetModuleFileName(NULL, szPath, MAX_PATH);
-    char drive[_MAX_DRIVE], dir[_MAX_DIR], fname[_MAX_FNAME], ext[_MAX_EXT];
-    _splitpath(szPath, drive, dir, fname, ext);
-    static char command[512];
-    _makepath(command, drive, dir, "curl", "exe");
-    strcat_s(command, sizeof command, " ");
-    strcat_s(command, sizeof command, args);
-    return system(command);
+    // we grabbed the path to the exe of the running process, during init.
+    // take that apart to get the drive & directory
+    static char drive[_MAX_DRIVE], dir[_MAX_DIR], fname[_MAX_FNAME], ext[_MAX_EXT];
+    _splitpath(exePath, drive, dir, fname, ext);
+    // then put it back together but with "curl.exe"
+    static char curlPath[MAX_PATH];
+    _makepath(curlPath, drive, dir, "curl", "exe");
+    // append the cURL argument(s)
+    static char command[1024];
+    sprintf_s(command, sizeof command, "\"%s\" %s", curlPath, args);
+    // and fire it all off
+    static PROCESS_INFORMATION procInfo;
+    memset(&procInfo, 0, sizeof procInfo);
+    static STARTUPINFO startupInfo;
+    memset(&startupInfo, 0, sizeof startupInfo);
+    startupInfo.cb = sizeof startupInfo;
+    BOOL bGood = CreateProcess(
+        NULL,
+        command,
+        NULL, NULL,         // processAttributes, threadAttributes
+        FALSE,              // inherit handles (nope)
+        HIGH_PRIORITY_CLASS,    // get 'er done
+        NULL,               // environment
+        NULL,               // current dir for new process
+        &startupInfo,
+        &procInfo
+    );
+    // close handles when done with them = now.
+    CloseHandle(procInfo.hProcess);
+    CloseHandle(procInfo.hThread);
 }
