@@ -12,7 +12,7 @@
 // ---- constants & macros ------------------------------
 
 #define NOTIFIER_NAME "bugsnag-win-c"
-#define NOTIFIER_VERSION "0.4.0.0"
+#define NOTIFIER_VERSION "0.5.0.0"
 #define NOTIFIER_URL "https://github.com/spike0xff/bugsnag-win-c"
 
 #define STRINGQ(x) #x
@@ -74,6 +74,28 @@ void bugsnag_init(const char* key)
     bugsnag_set_notify_stages(NULL);
     bugsnag_set_app_version(NULL);
     update_device();
+    bugsnag_set_auto_notify(TRUE);
+}
+
+static LONG WINAPI MyUnhandledExceptionFilter(
+    _In_ struct _EXCEPTION_POINTERS *ex
+)
+{
+    printf("UnhandledException!\n"); fflush(stdout);
+    BUGSNAG_NOTIFY(BUGSNAG_ERROR, "UnhandledException", "a structured exception was not caught");
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void bugsnag_set_auto_notify(int autonotify)
+{
+    static int autonotifyPrev = FALSE;
+    static LPTOP_LEVEL_EXCEPTION_FILTER exceptionFilterPrev = NULL;
+
+    autonotify = !!autonotify;          // force to 0 or 1
+    if (autonotify != autonotifyPrev) {
+        exceptionFilterPrev = SetUnhandledExceptionFilter(autonotify ? MyUnhandledExceptionFilter : exceptionFilterPrev);
+        autonotifyPrev = autonotify;
+    }
 }
 
 void bugsnag_set_app_version(const char* version)

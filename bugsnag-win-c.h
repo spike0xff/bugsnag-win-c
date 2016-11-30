@@ -12,6 +12,9 @@ extern "C"
     // None of the other bugsnag functions will necessarily work before this is called.
     extern void bugsnag_init(const char* key);
 
+    // enable or disabled automatic notification of unhandled structured exceptions.
+    extern void bugsnag_set_auto_notify(int autonotify);
+
     // Define the application version for subsequent notifications.
     // If app_version is set and an error is resolved in the dashboard, the
     // error will not unresolve until it is seen in a newer version.
